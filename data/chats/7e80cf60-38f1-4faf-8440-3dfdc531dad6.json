@@ -1,0 +1,16 @@
+{
+  "id": "7e80cf60-38f1-4faf-8440-3dfdc531dad6",
+  "name": "test2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hola que ase",
+      "ts": "2025-08-11T10:50:01.791Z"
+    },
+    {
+      "role": "assistant",
+      "content": "¡Hola! ¿Qué tal? Yo aquí, listo para ayudarte con lo que necesites. ¿En qué puedo asistirte hoy?",
+      "ts": "2025-08-11T10:50:10.803Z"
+    }
+  ]
+}
