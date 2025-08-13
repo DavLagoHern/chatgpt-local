@@ -18,8 +18,8 @@ async function writeIndex(items: any[]) {
     await fs.writeFile(INDEX_FILE, JSON.stringify(items, null, 2), 'utf8');
 }
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
-    const id = params.id;
+export async function GET(_: Request, context: { params: Promise<{ id: string }> }) {
+    const { id } = await context.params;
     const file = path.join(CHATS_DIR, `${id}.json`);
     try {
         const raw = await fs.readFile(file, 'utf8');
@@ -31,8 +31,8 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
 }
 
 // Renombrar
-export async function POST(req: Request, { params }: { params: { id: string } }) {
-    const id = params.id;
+export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
+    const { id } = await context.params;
     const { name } = await req.json().catch(() => ({} as any));
     if (!name || typeof name !== 'string') return NextResponse.json({ ok: true });
 
@@ -55,8 +55,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     }
 }
 
-export async function DELETE(_: Request, { params }: { params: { id: string } }) {
-    const id = params.id;
+export async function DELETE(_: Request, context: { params: Promise<{ id: string }> }) {
+    const { id } = await context.params;
     const file = path.join(CHATS_DIR, `${id}.json`);
     try {
         await fs.unlink(file);

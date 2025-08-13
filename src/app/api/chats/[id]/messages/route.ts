@@ -29,8 +29,8 @@ async function touchIndex(id: string) {
     }
 }
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
-    const id = params.id;
+export async function GET(_: Request, context: { params: Promise<{ id: string }> }) {
+    const { id } = await context.params;
     const file = path.join(CHATS_DIR, `${id}.json`);
     try {
         const raw = await fs.readFile(file, 'utf8');
@@ -41,8 +41,8 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
     }
 }
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
-    const id = params.id;
+export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
+    const { id } = await context.params;
     const { messages } = await req.json().catch(() => ({ messages: [] as Msg[] }));
     const file = await ensureChatFile(id);
     try {
