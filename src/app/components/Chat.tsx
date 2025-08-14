@@ -8,41 +8,16 @@ import ClearIcon from '@mui/icons-material/Clear';
 import MessageBubble from './MessageBubble';
 import Typing from './Typing';
 
-type Msg = { role: 'user' | 'assistant'; content: string; ts?: string };
+// Tipos -----------------------------------------------------------------------
+type MsgMeta = { ttfbMs?: number; totalMs?: number };
+type Msg = { role: 'user' | 'assistant'; content: string; ts?: string; meta?: MsgMeta };
 
+// Constantes ------------------------------------------------------------------
 const MODELS = ['gpt-oss:20b']; // añade otros modelos cuando los tengas en Ollama
-
-// ---------- utilidades ----------
 const LS_SELECTED = 'selectedChat';
 const LS_MODEL = 'selectedModel';
 
-function titleFromFirstUserMessage(msgs: Msg[]): string {
-    const first = msgs.find(m => m.role === 'user');
-    if (!first) return 'Nuevo chat';
-    const t = first.content.replace(/\s+/g, ' ').trim();
-    return t.length > 40 ? t.slice(0, 40) + '…' : (t || 'Nuevo chat');
-}
-
-// --- API helpers ---
-async function apiEnsureSelectedChat(): Promise<string> {
-    let id = (typeof window !== 'undefined') ? localStorage.getItem(LS_SELECTED) : null;
-    if (id) return id;
-
-    // crea chat vacío por defecto
-    const r = await fetch('/api/chats', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'Nuevo chat' })
-    });
-    if (!r.ok) throw new Error('No se pudo crear el chat por defecto');
-    const created = await r.json() as { id: string };
-    id = created.id;
-    localStorage.setItem(LS_SELECTED, id);
-    // avisa al sidebar para que refresque
-    if (typeof window !== 'undefined') window.dispatchEvent(new Event('chats-reloaded'));
-    return id!;
-}
-
+// API helpers -----------------------------------------------------------------
 async function apiGetMessages(id: string): Promise<Msg[]> {
     const r = await fetch(`/api/chats/${id}/messages`, { cache: 'no-store' });
     if (!r.ok) return [];
@@ -62,9 +37,17 @@ async function apiRename(id: string, name: string): Promise<void> {
         body: JSON.stringify({ name })
     });
 }
+async function apiCreate(name: string): Promise<{ id: string; name: string }> {
+    const r = await fetch('/api/chats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+    });
+    if (!r.ok) throw new Error('No se pudo crear el chat');
+    return r.json();
+}
 
-// --------------------------------------------------
-
+// Componente ------------------------------------------------------------------
 export default function Chat() {
     const [chatId, setChatId] = useState<string | null>(null);
     const [messages, setMessages] = useState<Msg[]>([]);
@@ -73,76 +56,110 @@ export default function Chat() {
     const scrollerRef = useRef<HTMLDivElement>(null);
     const [model, setModel] = useState<string>(MODELS[0]);
 
-    // modelo seleccionado (persistir sólo en local)
+    // evita crear múltiples veces al escribir por primera vez
+    const creatingRef = useRef(false);
+
+    // Modelo seleccionado (persistencia local)
     useEffect(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem(LS_MODEL);
-            if (saved) setModel(saved);
-        }
+        const saved = typeof window !== 'undefined' ? localStorage.getItem(LS_MODEL) : null;
+        if (saved) setModel(saved);
     }, []);
-    useEffect(() => { if (typeof window !== 'undefined') localStorage.setItem(LS_MODEL, model); }, [model]);
+    useEffect(() => {
+        if (typeof window !== 'undefined') localStorage.setItem(LS_MODEL, model);
+    }, [model]);
 
     // Autoscroll
     useEffect(() => {
         scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior: 'smooth' });
     }, [messages, busy]);
 
-    // Cargar chat seleccionado (o crear uno) y sus mensajes
+    // Cargar chat seleccionado si existe (NO crear automáticamente)
     const loadSelected = useCallback(async () => {
-        const id = await apiEnsureSelectedChat();
+        const id = typeof window !== 'undefined' ? localStorage.getItem(LS_SELECTED) : null;
+        if (!id) {
+            setChatId(null);
+            setMessages([]);
+            return;
+        }
         setChatId(id);
-        const msgs = await apiGetMessages(id);
-        setMessages(msgs);
+        setMessages(await apiGetMessages(id));
     }, []);
 
     useEffect(() => {
-        // primera carga
         loadSelected();
 
         // escuchar cambios desde Sidebar
         const onSwap = async () => {
             const id = localStorage.getItem(LS_SELECTED);
             if (!id) {
-                // si se borró la selección (p.ej. al borrar chat), creamos uno nuevo
-                const newId = await apiEnsureSelectedChat();
-                setChatId(newId);
-                setMessages(await apiGetMessages(newId));
+                setChatId(null);
+                setMessages([]);
                 return;
             }
             setChatId(id);
-            const msgs = await apiGetMessages(id);
-            setMessages(msgs);
+            setMessages(await apiGetMessages(id));
         };
         window.addEventListener('chat-changed', onSwap);
         return () => window.removeEventListener('chat-changed', onSwap);
     }, [loadSelected]);
 
-    // Persistir mensajes en disco + actualizar título si procede
-    const persist = useCallback(async (msgs: Msg[]) => {
-        if (!chatId) return;
-        await apiSaveMessages(chatId, msgs);
+    // Persistir mensajes en disco (NO tocar el título aquí)
+    const persist = useCallback(async (id: string, msgs: Msg[]) => {
+        await apiSaveMessages(id, msgs);
+        window.dispatchEvent(new Event('chats-reloaded')); // para refrescar previews/contadores
+    }, []);
 
-        const newTitle = titleFromFirstUserMessage(msgs);
-        await apiRename(chatId, newTitle);
-        // notificar al sidebar que recargue el historial
-        window.dispatchEvent(new Event('chats-reloaded'));
-    }, [chatId]);
+    // Crear chat al empezar a ESCRIBIR (opcional, para que el sidebar muestre "Nuevo chat" al instante)
+    const ensureChatOnTyping = useCallback(async () => {
+        if (chatId || busy || creatingRef.current) return;
+        creatingRef.current = true;
+        try {
+            const created = await apiCreate('Nuevo chat');
+            setChatId(created.id);
+            if (typeof window !== 'undefined') {
+                localStorage.setItem(LS_SELECTED, created.id);
+                window.dispatchEvent(new Event('chats-reloaded'));
+            }
+        } finally {
+            creatingRef.current = false;
+        }
+    }, [chatId, busy]);
 
-    // Enviar mensaje
+    // Enviar mensaje (crea chat si aún no existe)
     async function send() {
         const text = input.trim();
-        if (!text || busy || !chatId) return;
-
-        const userMsg: Msg = { role: 'user', content: text, ts: new Date().toISOString() };
-        const nextMsgs = [...messages, userMsg];
+        if (!text || busy) return;
 
         setInput('');
         setBusy(true);
+
+        // Asegura chat si aún no existe (por si el usuario pegó y envió sin "onChange")
+        let currentId = chatId;
+        if (!currentId) {
+            try {
+                const created = await apiCreate('Nuevo chat');
+                currentId = created.id;
+                setChatId(created.id);
+                if (typeof window !== 'undefined') {
+                    localStorage.setItem(LS_SELECTED, created.id);
+                    window.dispatchEvent(new Event('chats-reloaded'));
+                }
+            } catch {
+                setBusy(false);
+                setMessages(m => [...m, { role: 'assistant', content: '⚠️ No se pudo crear el chat.' }]);
+                return;
+            }
+        }
+
+        const userMsg: Msg = { role: 'user', content: text, ts: new Date().toISOString() };
+        const nextMsgs = [...messages, userMsg];
         setMessages(nextMsgs);
-        await persist(nextMsgs); // guardamos inmediatamente para que el título se actualice
+        await persist(currentId!, nextMsgs);
 
         try {
-            // streaming
+            // Inicio para medir TTFB/total
+            const t0 = performance.now();
+
             const body = JSON.stringify({
                 model,
                 messages: [...nextMsgs.slice(-12)],
@@ -156,16 +173,19 @@ export default function Chat() {
             });
 
             if (!resp.ok || !resp.body) {
-                const fail = [...nextMsgs, { role: 'assistant' as const, content: '⚠️ Error al conectar con el modelo.' }];
+                const fail = [...nextMsgs, { role: 'assistant' as const, content: '⚠️ Error al conectar con el modelo.', ts: new Date().toISOString() }];
                 setMessages(fail);
-                await persist(fail);
+                await persist(currentId!, fail);
                 setBusy(false);
                 return;
             }
 
-            // añadimos un mensaje vacío del assistant y lo vamos rellenando
+            // Placeholder del assistant que iremos actualizando
             let acc = '';
-            setMessages(m => [...m, { role: 'assistant', content: '' }]);
+            let gotFirst = false;
+            let ttfbMs: number | undefined;
+
+            setMessages(m => [...m, { role: 'assistant', content: '', meta: {} }]);
 
             const reader = resp.body.getReader();
             const decoder = new TextDecoder();
@@ -173,6 +193,19 @@ export default function Chat() {
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
+
+                if (!gotFirst) {
+                    gotFirst = true;
+                    ttfbMs = performance.now() - t0;
+                    // anota TTFB en el último mensaje (placeholder)
+                    setMessages(m => {
+                        const copy = [...m];
+                        const last = copy.length - 1;
+                        copy[last] = { ...copy[last], meta: { ...(copy[last] as any).meta, ttfbMs } };
+                        return copy;
+                    });
+                }
+
                 acc += decoder.decode(value, { stream: true });
                 setMessages(m => {
                     const copy = [...m];
@@ -182,25 +215,34 @@ export default function Chat() {
                 });
             }
 
-            // estado final en memoria + persistencia
-            const finalMsgs: Msg[] = [...nextMsgs, { role: 'assistant', content: acc, ts: new Date().toISOString() }];
+            const totalMs = performance.now() - t0;
+
+            // Estado final: reemplazamos la lista con el mensaje assistant definitivo + meta
+            const finalAssistant: Msg = {
+                role: 'assistant',
+                content: acc,
+                ts: new Date().toISOString(),
+                meta: { ttfbMs, totalMs }
+            };
+            const finalMsgs: Msg[] = [...nextMsgs, finalAssistant];
+
             setMessages(finalMsgs);
-            await persist(finalMsgs);
-        } catch (e) {
-            const fail = [...nextMsgs, { role: 'assistant' as const, content: '⚠️ Error inesperado.' }];
+            await persist(currentId!, finalMsgs);
+        } catch {
+            const fail = [...nextMsgs, { role: 'assistant' as const, content: '⚠️ Error inesperado.', ts: new Date().toISOString() }];
             setMessages(fail);
-            await persist(fail);
+            await persist(currentId!, fail);
         } finally {
             setBusy(false);
         }
     }
 
-    // Borrar conversación actual (deja el archivo con array vacío y título por defecto)
+    // Vaciar conversación actual (deja array vacío y título por defecto)
     async function clearChat() {
         if (!chatId) return;
         setMessages([]);
         await apiSaveMessages(chatId, []);
-        await apiRename(chatId, 'Nuevo chat');
+        await apiRename(chatId, 'Nuevo chat'); // título por defecto explícito (no se auto-deriva del primer mensaje)
         window.dispatchEvent(new Event('chats-reloaded'));
     }
 
@@ -239,7 +281,7 @@ export default function Chat() {
                 }}
             >
                 {messages.map((m, i) => (
-                    <MessageBubble key={i} role={m.role} content={m.content} />
+                    <MessageBubble key={i} role={m.role} content={m.content} meta={m.meta} />
                 ))}
 
                 {busy && (
@@ -257,7 +299,14 @@ export default function Chat() {
                     fullWidth
                     placeholder="Escribe tu mensaje…"
                     value={input}
-                    onChange={e => setInput(e.target.value)}
+                    onChange={async e => {
+                        const val = e.target.value;
+                        setInput(val);
+                        // crea el chat en cuanto empiezas a escribir si no hay uno seleccionado
+                        if (val.trim().length > 0 && !chatId) {
+                            await ensureChatOnTyping();
+                        }
+                    }}
                     onKeyDown={e => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
