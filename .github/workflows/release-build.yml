@@ -4,6 +4,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,7 +30,6 @@ jobs:
         run: |
           mkdir -p release
           cp package.json package-lock.json release/
-          # si tienes next.config.js, .env.example u otros ficheros necesarios en runtime, añádelos:
           if [ -f next.config.js ]; then cp next.config.js release/; fi
           cp -r .next public release/
 
@@ -40,3 +42,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: build.zip
+          tag_name: ${{ github.ref_name }}
