@@ -1,0 +1,42 @@
+name: build-release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build (Next)
+        run: npm run build
+
+      - name: Prepare bundle
+        run: |
+          mkdir -p release
+          cp package.json package-lock.json release/
+          # si tienes next.config.js, .env.example u otros ficheros necesarios en runtime, añádelos:
+          if [ -f next.config.js ]; then cp next.config.js release/; fi
+          cp -r .next public release/
+
+      - name: Zip bundle
+        run: |
+          cd release
+          zip -r ../build.zip .
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build.zip
