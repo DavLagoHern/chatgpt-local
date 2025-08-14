@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import {
     Box, List, ListItemButton, ListItemText, IconButton,
-    Typography, Divider, Button, TextField, Stack, Tooltip
+    Typography, Divider, Button, TextField, Stack, Tooltip,
+    Dialog, DialogTitle, DialogContent, DialogActions
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
@@ -23,6 +24,7 @@ async function apiCreate(name: string) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name })
     });
+    if (!r.ok) throw new Error('Error creando el chat');
     return r.json();
 }
 async function apiDelete(id: string) {
@@ -41,11 +43,15 @@ export default function SideBar() {
     const [editing, setEditing] = useState<string | null>(null);
     const [titleDraft, setTitleDraft] = useState('');
 
+    // Estado para el diálogo "Nuevo chat"
+    const [openNew, setOpenNew] = useState(false);
+    const [newName, setNewName] = useState('');
+
     const loadChats = async () => {
         const list = await apiList();
         setChats(list.map(c => ({ id: c.id, title: c.name })));
         const sel = localStorage.getItem(LS_SELECTED);
-        setSelected(sel);
+        if (sel) setSelected(sel);
     };
 
     useEffect(() => { loadChats(); }, []);
@@ -62,12 +68,26 @@ export default function SideBar() {
         window.dispatchEvent(new Event('chat-changed'));
     }
 
-    async function addChat() {
-        const name = prompt('Nombre del nuevo chat:') || 'Nuevo chat';
-        const created = await apiCreate(name);
-        const updated = [...chats, { id: created.id, title: created.name }];
-        setChats(updated);
-        selectChat(created.id);
+    // Abre el diálogo para crear chat
+    function addChat() {
+        setNewName('');
+        setOpenNew(true);
+    }
+
+    // Crea el chat con el nombre del diálogo
+    async function handleCreate() {
+        const name = (newName.trim() || 'Nuevo chat');
+        try {
+            const created = await apiCreate(name);
+            const updated = [...chats, { id: created.id, title: created.name }];
+            setChats(updated);
+            selectChat(created.id);
+            setOpenNew(false);
+            setNewName('');
+        } catch (e) {
+            // Opcional: mostrar un snackbar/toast
+            console.error(e);
+        }
     }
 
     async function deleteChat(id: string) {
@@ -98,14 +118,25 @@ export default function SideBar() {
     }
 
     return (
-        <Box sx={{ width: 260, bgcolor: 'background.paper', borderRight: '1px solid', borderColor: 'divider', display: 'flex', flexDirection: 'column' }}>
+        <Box
+            sx={{
+                width: 260,
+                bgcolor: 'background.paper',
+                borderRight: '1px solid',
+                borderColor: 'divider',
+                display: 'flex',
+                flexDirection: 'column'
+            }}
+        >
             <Box sx={{ p: 2 }}>
                 <Typography variant="h6">Historial</Typography>
                 <Button variant="outlined" fullWidth sx={{ mt: 1 }} onClick={addChat}>
                     Nuevo chat
                 </Button>
             </Box>
+
             <Divider />
+
             <List sx={{ flex: 1, overflowY: 'auto' }}>
                 {chats.map(chat => {
                     const isSel = chat.id === selected;
@@ -120,15 +151,18 @@ export default function SideBar() {
                             <ListItemText
                                 primary={
                                     isEdit ? (
-                                        <Stack direction="row" alignItems="center" spacing={1}>
+                                        <Stack direction="row" alignItems="center" spacing={1} sx={{ width: '100%' }}>
                                             <TextField
                                                 size="small"
                                                 value={titleDraft}
                                                 onChange={e => setTitleDraft(e.target.value)}
                                                 autoFocus
+                                                fullWidth
                                                 onKeyDown={e => { if (e.key === 'Enter') saveEdit(chat.id); }}
                                             />
-                                            <IconButton size="small" onClick={() => saveEdit(chat.id)}><CheckIcon fontSize="inherit" /></IconButton>
+                                            <IconButton size="small" onClick={() => saveEdit(chat.id)}>
+                                                <CheckIcon fontSize="inherit" />
+                                            </IconButton>
                                         </Stack>
                                     ) : (
                                         chat.title || 'Sin título'
@@ -137,14 +171,54 @@ export default function SideBar() {
                             />
                             {!isEdit && (
                                 <Stack direction="row" spacing={0.5}>
-                                    <Tooltip title="Renombrar"><IconButton size="small" onClick={(e) => { e.stopPropagation(); startEdit(chat.id, chat.title); }}><EditIcon fontSize="inherit" /></IconButton></Tooltip>
-                                    <Tooltip title="Borrar"><IconButton size="small" onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}><DeleteIcon fontSize="inherit" /></IconButton></Tooltip>
+                                    <Tooltip title="Renombrar">
+                                        <IconButton
+                                            size="small"
+                                            onClick={(e) => { e.stopPropagation(); startEdit(chat.id, chat.title); }}
+                                        >
+                                            <EditIcon fontSize="inherit" />
+                                        </IconButton>
+                                    </Tooltip>
+                                    <Tooltip title="Borrar">
+                                        <IconButton
+                                            size="small"
+                                            onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}
+                                        >
+                                            <DeleteIcon fontSize="inherit" />
+                                        </IconButton>
+                                    </Tooltip>
                                 </Stack>
                             )}
                         </ListItemButton>
                     );
                 })}
             </List>
+
+            {/* Diálogo para crear nuevo chat */}
+            <Dialog
+                open={openNew}
+                onClose={() => setOpenNew(false)}
+                fullWidth
+                maxWidth="xs"
+            >
+                <DialogTitle>Nuevo chat</DialogTitle>
+                <DialogContent>
+                    <TextField
+                        autoFocus
+                        margin="dense"
+                        label="Título del chat"
+                        placeholder="Ej. Investigación, Soporte, Ideas..."
+                        fullWidth
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleCreate(); }}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setOpenNew(false)}>Cancelar</Button>
+                    <Button onClick={handleCreate}>Crear</Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     );
 }
